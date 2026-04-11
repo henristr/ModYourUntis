@@ -7,7 +7,7 @@ Create a `.env` file in the project root to configure the app.
 Example:
 
 ```env
-SECRET_KEY=cyour-key
+SECRET_KEY=your-key
 SCHOOL=YourSchool
 SERVER=your-school.webuntis.com
 
