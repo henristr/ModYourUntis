@@ -6,18 +6,48 @@ import os
 import hashlib
 import json
 
+
+def load_env_file(path):
+    if not os.path.exists(path):
+        return
+
+    with open(path, "r", encoding="utf-8") as env_file:
+        for raw_line in env_file:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            os.environ.setdefault(key, value)
+
+
+def env_bool(name, default=False):
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+load_env_file(os.path.join(os.path.dirname(__file__), ".env"))
+
 app = Flask(__name__)
 app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
-SCHOOL = "Gym Bersenbrück"
-SERVER = "nessa.webuntis.com"
+SCHOOL = os.environ.get("SCHOOL", "Gym Bersenbrück")
+SERVER = os.environ.get("SERVER", "nessa.webuntis.com")
 DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
 THEME_NAME_MAX_LENGTH = 40
+APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
+APP_PORT = int(os.environ.get("APP_PORT", "5000"))
+APP_DEBUG = env_bool("APP_DEBUG", default=True)
 
 
 def init_db():
     with sqlite3.connect(DB_PATH) as conn:
-        conn.execute("""
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS themes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT NOT NULL,
@@ -26,8 +56,10 @@ def init_db():
                 created_at TEXT NOT NULL,
                 UNIQUE(username, name)
             )
-        """)
-        conn.execute("""
+        """
+        )
+        conn.execute(
+            """
             CREATE TABLE IF NOT EXISTS lesson_styles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 theme_id INTEGER NOT NULL,
@@ -38,7 +70,8 @@ def init_db():
                 UNIQUE(theme_id, lesson_key),
                 FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE
             )
-        """)
+        """
+        )
         conn.commit()
 
 
@@ -57,7 +90,11 @@ def ensure_default_theme(username):
         if not row:
             conn.execute(
                 "INSERT INTO themes(username, name, is_active, created_at) VALUES (?, ?, 1, ?)",
-                (username, "Default", datetime.datetime.now(datetime.timezone.utc).isoformat()),
+                (
+                    username,
+                    "Default",
+                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                ),
             )
             conn.commit()
 
@@ -85,8 +122,12 @@ def get_active_theme(username):
             (username,),
         ).fetchone()
         if fallback:
-            conn.execute("UPDATE themes SET is_active = 0 WHERE username = ?", (username,))
-            conn.execute("UPDATE themes SET is_active = 1 WHERE id = ?", (fallback["id"],))
+            conn.execute(
+                "UPDATE themes SET is_active = 0 WHERE username = ?", (username,)
+            )
+            conn.execute(
+                "UPDATE themes SET is_active = 1 WHERE id = ?", (fallback["id"],)
+            )
             conn.commit()
             return dict(fallback)
     return None
@@ -224,7 +265,12 @@ def get_timetable(session_id, user_id, start, end, user_type=5):
     payload = {
         "id": "2",
         "method": "getTimetable",
-        "params": {"id": user_id, "type": user_type, "startDate": start, "endDate": end},
+        "params": {
+            "id": user_id,
+            "type": user_type,
+            "startDate": start,
+            "endDate": end,
+        },
         "jsonrpc": "2.0",
     }
     cookies = {"JSESSIONID": session_id}
@@ -799,4 +845,4 @@ def timetable():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(host=APP_HOST, port=APP_PORT, debug=APP_DEBUG)
