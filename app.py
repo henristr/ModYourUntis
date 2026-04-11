@@ -219,12 +219,16 @@ def create_theme(username, name):
     if exists:
         return
 
+    for theme in data["themes"]:
+        if theme["username"] == username:
+            theme["is_active"] = 0
+
     data["themes"].append(
         {
             "id": int(data["next_theme_id"]),
             "username": username,
             "name": cleaned,
-            "is_active": 0,
+            "is_active": 1,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "background_color": DEFAULT_BACKGROUND_COLOR,
         }
