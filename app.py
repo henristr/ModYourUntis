@@ -3,6 +3,7 @@ import requests
 import datetime
 import sqlite3
 import os
+import hashlib
 
 app = Flask(__name__)
 app.secret_key = "mega-geheimes-passwort"
@@ -54,7 +55,7 @@ def ensure_default_theme(username):
         if not row:
             conn.execute(
                 "INSERT INTO themes(username, name, is_active, created_at) VALUES (?, ?, 1, ?)",
-                (username, "Standard", datetime.datetime.utcnow().isoformat()),
+                (username, "Standard", datetime.datetime.now(datetime.timezone.utc).isoformat()),
             )
             conn.commit()
 
@@ -112,7 +113,7 @@ def create_theme(username, name):
     with get_db_connection() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO themes(username, name, is_active, created_at) VALUES (?, ?, 0, ?)",
-            (username, cleaned[:40], datetime.datetime.utcnow().isoformat()),
+            (username, cleaned[:40], datetime.datetime.now(datetime.timezone.utc).isoformat()),
         )
         conn.commit()
 
@@ -448,7 +449,8 @@ def timetable():
             teacher = entry.get("te", [{}])[0].get("longName", teacher)
 
         entry_id = entry.get("id") or entry.get("lessonId") or ""
-        lesson_key = f"{weekday}-{start_time}-{end_time}-{subject}-{teacher}-{room}-{entry_id}"
+        raw_lesson_key = f"{username}|{weekday}|{start_time}|{end_time}|{subject}|{teacher}|{room}|{entry_id}"
+        lesson_key = hashlib.sha256(raw_lesson_key.encode("utf-8")).hexdigest()
 
         if code == "cancelled":
             default_bg = "#e74c3c"
@@ -655,6 +657,24 @@ def timetable():
         function closeLessonEditor() {
           document.getElementById('editorModal').style.display = 'none';
         }
+        function initializeLessonEditors() {
+          document.querySelectorAll('.lesson').forEach((el) => {
+            el.addEventListener('click', function() {
+              openLessonEditor(
+                this.dataset.lessonKey,
+                this.dataset.subject,
+                this.dataset.bgColor,
+                this.dataset.textColor,
+                this.dataset.borderRadius
+              );
+            });
+          });
+          document.getElementById('editorModal').addEventListener('click', function(event) {
+            if (event.target === this) closeLessonEditor();
+          });
+          document.getElementById('closeEditorButton').addEventListener('click', closeLessonEditor);
+        }
+        document.addEventListener('DOMContentLoaded', initializeLessonEditors);
       </script>
     </head>
     <body>
@@ -695,7 +715,11 @@ def timetable():
                     <div
                       class="lesson {% if lesson.code == 'cancelled' %}cancelled{% endif %}"
                       style="background: {{ lesson.display_bg }}; color: {{ lesson.text_color }}; border-radius: {{ lesson.border_radius }}px;"
-                      onclick='openLessonEditor({{ lesson.lesson_key|tojson }}, {{ lesson.subject|tojson }}, {{ lesson.display_bg|tojson }}, {{ lesson.text_color|tojson }}, {{ lesson.border_radius }})'
+                      data-lesson-key="{{ lesson.lesson_key }}"
+                      data-subject="{{ lesson.subject }}"
+                      data-bg-color="{{ lesson.display_bg }}"
+                      data-text-color="{{ lesson.text_color }}"
+                      data-border-radius="{{ lesson.border_radius }}"
                     >
                       <span class="edit-tag">anpassen</span>
                       {{ lesson.subject }}<br>
@@ -710,7 +734,7 @@ def timetable():
         </table>
       </div>
 
-      <div class="modal" id="editorModal" onclick="if(event.target === this){closeLessonEditor();}">
+      <div class="modal" id="editorModal">
         <div class="modal-content">
           <h3>Stunde anpassen: <span id="edit_subject"></span></h3>
           <form method="POST" action="{{ url_for('lesson_style_save') }}">
@@ -727,7 +751,7 @@ def timetable():
               </label>
             </div>
             <div class="modal-actions">
-              <button type="button" class="btn-secondary" onclick="closeLessonEditor()">Abbrechen</button>
+              <button type="button" class="btn-secondary" id="closeEditorButton">Abbrechen</button>
               <button type="submit">Speichern</button>
             </div>
           </form>
