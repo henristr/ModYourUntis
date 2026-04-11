@@ -1,7 +1,6 @@
 from flask import Flask, render_template_string, request, redirect, url_for, session
 import requests
 import datetime
-import sqlite3
 import os
 import hashlib
 import json
@@ -37,108 +36,166 @@ app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 SCHOOL = os.environ.get("SCHOOL", "Gym Bersenbrück")
 SERVER = os.environ.get("SERVER", "nessa.webuntis.com")
-DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
+DATA_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.json")
+LEGACY_DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
 THEME_NAME_MAX_LENGTH = 40
+DEFAULT_BACKGROUND_COLOR = "#f4f6ff"
 APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("APP_PORT", "5000"))
 APP_DEBUG = env_bool("APP_DEBUG", default=True)
 
 
+def default_data_store():
+    return {"next_theme_id": 1, "themes": [], "lesson_styles": []}
+
+
+def load_data_store():
+    if not os.path.exists(DATA_PATH):
+        return default_data_store()
+
+    try:
+        with open(DATA_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return default_data_store()
+
+    if not isinstance(data, dict):
+        return default_data_store()
+
+    data.setdefault("next_theme_id", 1)
+    data.setdefault("themes", [])
+    data.setdefault("lesson_styles", [])
+
+    for theme in data["themes"]:
+        theme.setdefault("background_color", DEFAULT_BACKGROUND_COLOR)
+
+    return data
+
+
+def save_data_store(data):
+    tmp_path = DATA_PATH + ".tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, DATA_PATH)
+
+
+def migrate_legacy_db_if_needed(data):
+    if data["themes"] or data["lesson_styles"] or not os.path.exists(LEGACY_DB_PATH):
+        return data
+
+    try:
+        import sqlite3
+
+        with sqlite3.connect(LEGACY_DB_PATH) as conn:
+            conn.row_factory = sqlite3.Row
+            themes = conn.execute(
+                "SELECT id, username, name, is_active, created_at FROM themes"
+            ).fetchall()
+            lesson_styles = conn.execute(
+                "SELECT theme_id, lesson_key, bg_color, text_color, border_radius FROM lesson_styles"
+            ).fetchall()
+    except Exception:
+        return data
+
+    data["themes"] = [
+        {
+            "id": int(row["id"]),
+            "username": row["username"],
+            "name": row["name"],
+            "is_active": int(row["is_active"]),
+            "created_at": row["created_at"],
+            "background_color": DEFAULT_BACKGROUND_COLOR,
+        }
+        for row in themes
+    ]
+    data["lesson_styles"] = [
+        {
+            "theme_id": int(row["theme_id"]),
+            "lesson_key": row["lesson_key"],
+            "bg_color": row["bg_color"],
+            "text_color": row["text_color"],
+            "border_radius": int(row["border_radius"]),
+        }
+        for row in lesson_styles
+    ]
+    max_theme_id = max((theme["id"] for theme in data["themes"]), default=0)
+    data["next_theme_id"] = max_theme_id + 1
+    return data
+
+
 def init_db():
-    with sqlite3.connect(DB_PATH) as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS themes (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username TEXT NOT NULL,
-                name TEXT NOT NULL,
-                is_active INTEGER NOT NULL DEFAULT 0,
-                created_at TEXT NOT NULL,
-                UNIQUE(username, name)
-            )
-        """
-        )
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS lesson_styles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                theme_id INTEGER NOT NULL,
-                lesson_key TEXT NOT NULL,
-                bg_color TEXT NOT NULL,
-                text_color TEXT NOT NULL,
-                border_radius INTEGER NOT NULL DEFAULT 12,
-                UNIQUE(theme_id, lesson_key),
-                FOREIGN KEY(theme_id) REFERENCES themes(id) ON DELETE CASCADE
-            )
-        """
-        )
-        conn.commit()
-
-
-def get_db_connection():
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    data = load_data_store()
+    data = migrate_legacy_db_if_needed(data)
+    save_data_store(data)
 
 
 def ensure_default_theme(username):
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT id FROM themes WHERE username = ? LIMIT 1",
-            (username,),
-        ).fetchone()
-        if not row:
-            conn.execute(
-                "INSERT INTO themes(username, name, is_active, created_at) VALUES (?, ?, 1, ?)",
-                (
-                    username,
-                    "Default",
-                    datetime.datetime.now(datetime.timezone.utc).isoformat(),
-                ),
-            )
-            conn.commit()
+    data = load_data_store()
+    has_theme = any(theme["username"] == username for theme in data["themes"])
+    if has_theme:
+        return
+
+    data["themes"].append(
+        {
+            "id": int(data["next_theme_id"]),
+            "username": username,
+            "name": "Default",
+            "is_active": 1,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "background_color": DEFAULT_BACKGROUND_COLOR,
+        }
+    )
+    data["next_theme_id"] = int(data["next_theme_id"]) + 1
+    save_data_store(data)
 
 
 def get_user_themes(username):
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT id, name, is_active FROM themes WHERE username = ? ORDER BY name",
-            (username,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    data = load_data_store()
+    rows = [
+        {"id": t["id"], "name": t["name"], "is_active": t["is_active"]}
+        for t in data["themes"]
+        if t["username"] == username
+    ]
+    return sorted(rows, key=lambda item: item["name"].lower())
 
 
 def get_active_theme(username):
-    with get_db_connection() as conn:
-        row = conn.execute(
-            "SELECT id, name FROM themes WHERE username = ? AND is_active = 1 LIMIT 1",
-            (username,),
-        ).fetchone()
-        if row:
-            return dict(row)
+    data = load_data_store()
+    user_themes = [t for t in data["themes"] if t["username"] == username]
+    for theme in user_themes:
+        if int(theme.get("is_active", 0)) == 1:
+            return {
+                "id": theme["id"],
+                "name": theme["name"],
+                "background_color": theme.get(
+                    "background_color", DEFAULT_BACKGROUND_COLOR
+                ),
+            }
 
-        fallback = conn.execute(
-            "SELECT id, name FROM themes WHERE username = ? ORDER BY id LIMIT 1",
-            (username,),
-        ).fetchone()
-        if fallback:
-            conn.execute(
-                "UPDATE themes SET is_active = 0 WHERE username = ?", (username,)
-            )
-            conn.execute(
-                "UPDATE themes SET is_active = 1 WHERE id = ?", (fallback["id"],)
-            )
-            conn.commit()
-            return dict(fallback)
+    if user_themes:
+        fallback = sorted(user_themes, key=lambda t: int(t["id"]))[0]
+        fallback_id = int(fallback["id"])
+        for theme in data["themes"]:
+            if theme["username"] == username:
+                theme["is_active"] = 1 if int(theme["id"]) == fallback_id else 0
+        save_data_store(data)
+        return {
+            "id": fallback["id"],
+            "name": fallback["name"],
+            "background_color": fallback.get(
+                "background_color", DEFAULT_BACKGROUND_COLOR
+            ),
+        }
     return None
 
 
 def get_theme_styles(theme_id):
-    with get_db_connection() as conn:
-        rows = conn.execute(
-            "SELECT lesson_key, bg_color, text_color, border_radius FROM lesson_styles WHERE theme_id = ?",
-            (theme_id,),
-        ).fetchall()
+    data = load_data_store()
+    rows = [
+        style
+        for style in data["lesson_styles"]
+        if int(style["theme_id"]) == int(theme_id)
+    ]
     return {
         r["lesson_key"]: {
             "bg_color": r["bg_color"],
@@ -153,29 +210,98 @@ def create_theme(username, name):
     cleaned = (name or "").strip()
     if not cleaned:
         return
-    with get_db_connection() as conn:
-        conn.execute(
-            "INSERT OR IGNORE INTO themes(username, name, is_active, created_at) VALUES (?, ?, 0, ?)",
-            (
-                username,
-                cleaned[:THEME_NAME_MAX_LENGTH],
-                datetime.datetime.now(datetime.timezone.utc).isoformat(),
-            ),
-        )
-        conn.commit()
+    cleaned = cleaned[:THEME_NAME_MAX_LENGTH]
+
+    data = load_data_store()
+    exists = any(
+        t["username"] == username and t["name"] == cleaned for t in data["themes"]
+    )
+    if exists:
+        return
+
+    data["themes"].append(
+        {
+            "id": int(data["next_theme_id"]),
+            "username": username,
+            "name": cleaned,
+            "is_active": 0,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "background_color": DEFAULT_BACKGROUND_COLOR,
+        }
+    )
+    data["next_theme_id"] = int(data["next_theme_id"]) + 1
+    save_data_store(data)
 
 
 def set_active_theme(username, theme_id):
-    with get_db_connection() as conn:
-        own = conn.execute(
-            "SELECT id FROM themes WHERE id = ? AND username = ?",
-            (theme_id, username),
-        ).fetchone()
-        if not own:
-            return
-        conn.execute("UPDATE themes SET is_active = 0 WHERE username = ?", (username,))
-        conn.execute("UPDATE themes SET is_active = 1 WHERE id = ?", (theme_id,))
-        conn.commit()
+    data = load_data_store()
+    owns_theme = any(
+        int(t["id"]) == int(theme_id) and t["username"] == username
+        for t in data["themes"]
+    )
+    if not owns_theme:
+        return
+
+    for theme in data["themes"]:
+        if theme["username"] == username:
+            theme["is_active"] = 1 if int(theme["id"]) == int(theme_id) else 0
+    save_data_store(data)
+
+
+def delete_theme(username, theme_id):
+    data = load_data_store()
+    user_themes = [t for t in data["themes"] if t["username"] == username]
+    if len(user_themes) <= 1:
+        return False
+
+    target = next(
+        (t for t in user_themes if int(t["id"]) == int(theme_id)),
+        None,
+    )
+    if not target:
+        return False
+
+    was_active = int(target.get("is_active", 0)) == 1
+    delete_id = int(target["id"])
+
+    data["themes"] = [
+        t
+        for t in data["themes"]
+        if not (t["username"] == username and int(t["id"]) == delete_id)
+    ]
+    data["lesson_styles"] = [
+        style for style in data["lesson_styles"] if int(style["theme_id"]) != delete_id
+    ]
+
+    remaining = sorted(
+        [t for t in data["themes"] if t["username"] == username],
+        key=lambda t: int(t["id"]),
+    )
+
+    if remaining:
+        if was_active or not any(int(t.get("is_active", 0)) == 1 for t in remaining):
+            first_id = int(remaining[0]["id"])
+            for theme in data["themes"]:
+                if theme["username"] == username:
+                    theme["is_active"] = 1 if int(theme["id"]) == first_id else 0
+
+    save_data_store(data)
+    return True
+
+
+def set_active_theme_background(username, background_color):
+    active_theme = get_active_theme(username)
+    if not active_theme:
+        return
+
+    safe_background = sanitize_hex_color(background_color, DEFAULT_BACKGROUND_COLOR)
+    data = load_data_store()
+    target_id = int(active_theme["id"])
+    for theme in data["themes"]:
+        if theme["username"] == username and int(theme["id"]) == target_id:
+            theme["background_color"] = safe_background
+            break
+    save_data_store(data)
 
 
 def sanitize_hex_color(value, fallback):
@@ -205,20 +331,32 @@ def save_lesson_style(username, lesson_key, bg_color, text_color, border_radius)
     safe_bg = sanitize_hex_color(bg_color, "#3498db")
     safe_text = sanitize_hex_color(text_color, "#ffffff")
 
-    with get_db_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO lesson_styles(theme_id, lesson_key, bg_color, text_color, border_radius)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(theme_id, lesson_key)
-            DO UPDATE SET
-                bg_color = excluded.bg_color,
-                text_color = excluded.text_color,
-                border_radius = excluded.border_radius
-            """,
-            (active_theme["id"], lesson_key, safe_bg, safe_text, radius),
+    data = load_data_store()
+    theme_id = int(active_theme["id"])
+    existing = next(
+        (
+            style
+            for style in data["lesson_styles"]
+            if int(style["theme_id"]) == theme_id and style["lesson_key"] == lesson_key
+        ),
+        None,
+    )
+
+    if existing:
+        existing["bg_color"] = safe_bg
+        existing["text_color"] = safe_text
+        existing["border_radius"] = radius
+    else:
+        data["lesson_styles"].append(
+            {
+                "theme_id": theme_id,
+                "lesson_key": lesson_key,
+                "bg_color": safe_bg,
+                "text_color": safe_text,
+                "border_radius": radius,
+            }
         )
-        conn.commit()
+    save_data_store(data)
 
 
 def login_untis(username, password):
@@ -276,6 +414,18 @@ def get_timetable(session_id, user_id, start, end, user_type=5):
     cookies = {"JSESSIONID": session_id}
     r = requests.post(url, json=payload, cookies=cookies)
     return r.json().get("result", [])
+
+
+def get_timegrid_units(session_id):
+    url = f"https://{SERVER}/WebUntis/jsonrpc.do?school={SCHOOL}"
+    payload = {"id": 4, "method": "getTimegridUnits", "params": {}, "jsonrpc": "2.0"}
+    cookies = {"JSESSIONID": session_id}
+
+    try:
+        r = requests.post(url, json=payload, cookies=cookies)
+        return r.json().get("result", [])
+    except Exception:
+        return []
 
 
 def generate_colors(subjects):
@@ -423,6 +573,30 @@ def theme_activate():
     return redirect(url_for("timetable"))
 
 
+@app.route("/theme/delete", methods=["POST"])
+def theme_delete():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("index"))
+
+    theme_id = request.form.get("theme_id")
+    try:
+        delete_theme(username, int(theme_id))
+    except (TypeError, ValueError):
+        pass
+    return redirect(url_for("timetable"))
+
+
+@app.route("/theme/background", methods=["POST"])
+def theme_background():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("index"))
+
+    set_active_theme_background(username, request.form.get("background_color", ""))
+    return redirect(url_for("timetable"))
+
+
 @app.route("/lesson-style/save", methods=["POST"])
 def lesson_style_save():
     username = session.get("username")
@@ -459,9 +633,23 @@ def timetable():
     active_theme = get_active_theme(username)
     themes = get_user_themes(username)
     styles = get_theme_styles(active_theme["id"]) if active_theme else {}
+    active_background_color = (
+        active_theme.get("background_color", DEFAULT_BACKGROUND_COLOR)
+        if active_theme
+        else DEFAULT_BACKGROUND_COLOR
+    )
+
+    try:
+        week_offset = int(request.args.get("week", "0"))
+    except ValueError:
+        week_offset = 0
 
     today = datetime.date.today()
-    monday = today - datetime.timedelta(days=today.weekday())
+    monday = (
+        today
+        - datetime.timedelta(days=today.weekday())
+        + datetime.timedelta(weeks=week_offset)
+    )
     friday = monday + datetime.timedelta(days=4)
     start = int(monday.strftime("%Y%m%d"))
     end = int(friday.strftime("%Y%m%d"))
@@ -472,6 +660,7 @@ def timetable():
     colors = generate_colors(subjects)
 
     timetable_data = get_timetable(session_id, user_id, start, end, user_type=5)
+    timegrid_units = get_timegrid_units(session_id)
 
     days = {1: "Montag", 2: "Dienstag", 3: "Mittwoch", 4: "Donnerstag", 5: "Freitag"}
     plan = {d: {} for d in days}
@@ -502,7 +691,15 @@ def timetable():
             teacher = entry.get("te", [{}])[0].get("longName", teacher)
 
         entry_id = entry.get("id") or entry.get("lessonId") or ""
-        raw_lesson_key = json.dumps(
+
+        # Stable key per class/subject so edits apply to all matching lessons.
+        if su_id is not None:
+            lesson_key = f"subject:{su_id}"
+        else:
+            lesson_key = f"subject-name:{subject.strip().lower()}"
+
+        # Backward compatibility: styles previously saved per lesson instance.
+        legacy_raw_lesson_key = json.dumps(
             {
                 "username": username,
                 "weekday": weekday,
@@ -517,7 +714,9 @@ def timetable():
             ensure_ascii=False,
             separators=(",", ":"),
         )
-        lesson_key = hashlib.sha256(raw_lesson_key.encode("utf-8")).hexdigest()
+        legacy_lesson_key = hashlib.sha256(
+            legacy_raw_lesson_key.encode("utf-8")
+        ).hexdigest()
 
         if code == "cancelled":
             default_bg = "#e74c3c"
@@ -526,7 +725,7 @@ def timetable():
         else:
             default_bg = colors.get(subject, "#999999")
 
-        style_override = styles.get(lesson_key, {})
+        style_override = styles.get(lesson_key) or styles.get(legacy_lesson_key, {})
         display_bg = style_override.get("bg_color", default_bg)
         text_color = style_override.get("text_color", "#ffffff")
         border_radius = style_override.get("border_radius", 12)
@@ -553,25 +752,89 @@ def timetable():
             plan[weekday][start_time] = []
         plan[weekday][start_time].append(lesson)
 
-    times = sorted({t for d in plan.values() for t in d.keys()})
+    grid_slots = []
+    for unit in timegrid_units:
+        start_time = unit.get("startTime")
+        end_time = unit.get("endTime")
+        if start_time is None or end_time is None:
+            continue
+        grid_slots.append((start_time, end_time))
+
+    # Use school period grid to keep empty lessons visible (for example 6th and 8th with empty 7th).
+    if grid_slots:
+        grid_slots = sorted(set(grid_slots), key=lambda item: item[0])
+        times = [slot[0] for slot in grid_slots]
+        for start_time, end_time in grid_slots:
+            time_labels.setdefault(
+                start_time,
+                {"start": format_time(start_time), "end": format_time(end_time)},
+            )
+    else:
+        times = sorted({t for d in plan.values() for t in d.keys()})
+
+    for day_plan in plan.values():
+        for start_time in times:
+            day_plan.setdefault(start_time, [])
 
     html_template = """
     <html>
     <head>
       <title>ModYourUntis | Stundenplan</title>
+      <script>
+        (function() {
+          const key = 'preferred-theme';
+          let saved = null;
+          try {
+            saved = localStorage.getItem(key);
+          } catch (e) {
+            saved = null;
+          }
+
+          const fromSystem = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          const theme = saved === 'dark' || saved === 'light' ? saved : fromSystem;
+          document.documentElement.setAttribute('data-theme', theme);
+          document.documentElement.style.colorScheme = theme;
+        })();
+      </script>
       <style>
         :root {
-          --bg: #f4f6ff;
+          --bg: {{ active_background_color }};
+          --bg-gradient-end: {{ active_background_color }};
           --surface: #ffffff;
           --text: #263355;
           --muted: #6f7aa3;
+          --elevated: #fbfcff;
+          --time-bg: #f2f5ff;
+          --control-border: #d6ddff;
+          --control-bg: #ffffff;
+          --control-text: #263355;
+          --control-shadow: 0 6px 18px rgba(44, 64, 138, 0.08);
+          --table-shadow: 0 8px 25px rgba(28, 44, 102, 0.10);
+          --link-bg: #e9eeff;
+          --link-text: #4f6df5;
+          --primary: #4f6df5;
+        }
+        :root[data-theme="dark"] {
+          --surface: #1a233f;
+          --text: #dde6ff;
+          --muted: #9fb0e0;
+          --elevated: #151d35;
+          --time-bg: #253154;
+          --control-border: #334675;
+          --control-bg: #1f2a49;
+          --control-text: #dde6ff;
+          --control-shadow: 0 10px 20px rgba(4, 8, 20, 0.35);
+          --table-shadow: 0 14px 30px rgba(4, 8, 20, 0.45);
+          --link-bg: #22325f;
+          --link-text: #d7e2ff;
+          --primary: #7f9dff;
         }
         * { box-sizing: border-box; }
         body {
           font-family: 'Inter', 'Segoe UI', sans-serif;
           margin: 0;
           padding: 24px;
-          background: linear-gradient(180deg, #eef2ff 0%, #f8f9ff 70%);
+          background: linear-gradient(180deg, var(--bg) 0%, var(--bg-gradient-end) 70%);
           color: var(--text);
         }
         .topbar {
@@ -582,7 +845,7 @@ def timetable():
           align-items: center;
           margin-bottom: 16px;
         }
-        .brand h1 { margin: 0; font-size: 1.6rem; color: #3047a6; }
+        .brand h1 { margin: 0; font-size: 1.6rem; color: var(--primary); }
         .brand small { color: var(--muted); }
         .controls {
           display: flex;
@@ -597,17 +860,18 @@ def timetable():
           background: var(--surface);
           padding: 8px;
           border-radius: 12px;
-          box-shadow: 0 6px 18px rgba(44, 64, 138, 0.08);
+          box-shadow: var(--control-shadow);
         }
         input, select, button {
-          border: 1px solid #d6ddff;
+          border: 1px solid var(--control-border);
           border-radius: 10px;
           padding: 8px 10px;
           font-size: 14px;
-          background: white;
+          background: var(--control-bg);
+          color: var(--control-text);
         }
         button {
-          background: #4f6df5;
+          background: var(--primary);
           color: white;
           border: none;
           cursor: pointer;
@@ -615,16 +879,29 @@ def timetable():
         }
         .logout {
           text-decoration: none;
-          color: #4f6df5;
+          color: var(--link-text);
           font-weight: 600;
-          background: #e9eeff;
+          background: var(--link-bg);
           padding: 8px 12px;
           border-radius: 10px;
+        }
+        .theme-toggle {
+          border: 1px solid var(--control-border);
+          background: var(--link-bg);
+          color: var(--link-text);
+          border-radius: 10px;
+          padding: 8px 12px;
+          font-weight: 600;
+          cursor: pointer;
+        }
+        .btn-danger {
+          background: #c0392b;
+          color: #ffffff;
         }
         .table-wrap {
           background: var(--surface);
           border-radius: 16px;
-          box-shadow: 0 8px 25px rgba(28, 44, 102, 0.10);
+          box-shadow: var(--table-shadow);
           overflow-x: auto;
           padding: 8px;
         }
@@ -640,19 +917,19 @@ def timetable():
         }
         th {
           padding: 10px;
-          color: #4a5686;
+          color: var(--muted);
           font-size: 0.9rem;
         }
         td.time {
-          background: #f2f5ff;
-          color: #586189;
+          background: var(--time-bg);
+          color: var(--muted);
           font-weight: 700;
           border-radius: 10px;
           width: 90px;
           padding: 8px;
         }
         td.slot {
-          background: #fbfcff;
+          background: var(--elevated);
           border-radius: 12px;
           min-height: 72px;
           padding: 4px;
@@ -693,7 +970,7 @@ def timetable():
         }
         .modal-content {
           width: min(420px, 95vw);
-          background: white;
+          background: var(--surface);
           border-radius: 16px;
           padding: 18px;
           box-shadow: 0 20px 30px rgba(0,0,0,.2);
@@ -708,11 +985,79 @@ def timetable():
           gap: 8px;
         }
         .btn-secondary {
-          background: #e9eeff;
-          color: #3550be;
+          background: var(--link-bg);
+          color: var(--link-text);
         }
       </style>
       <script>
+        const THEME_STORAGE_KEY = 'preferred-theme';
+
+        function getSystemTheme() {
+          return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+        }
+
+        function updateThemeToggleLabel(theme) {
+          const button = document.getElementById('themeToggle');
+          if (!button) return;
+          button.innerText = theme === 'dark' ? '☀️' : '🌑';
+        }
+
+        function applyTheme(theme) {
+          const finalTheme = theme === 'dark' ? 'dark' : 'light';
+          document.documentElement.setAttribute('data-theme', finalTheme);
+          document.documentElement.style.colorScheme = finalTheme;
+          updateThemeToggleLabel(finalTheme);
+        }
+
+        function getInitialTheme() {
+          let saved = null;
+          try {
+            saved = localStorage.getItem(THEME_STORAGE_KEY);
+          } catch (e) {
+            saved = null;
+          }
+          if (saved === 'dark' || saved === 'light') return saved;
+          return getSystemTheme();
+        }
+
+        function toggleTheme() {
+          const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
+          const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+          try {
+            localStorage.setItem(THEME_STORAGE_KEY, nextTheme);
+          } catch (e) {
+            // Ignore storage errors and still switch for current session.
+          }
+          applyTheme(nextTheme);
+        }
+
+        function initializeTheme() {
+          applyTheme(getInitialTheme());
+
+          const themeToggle = document.getElementById('themeToggle');
+          if (themeToggle) {
+            themeToggle.addEventListener('click', toggleTheme);
+          }
+
+          const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
+          const onSystemThemeChange = (event) => {
+            let saved = null;
+            try {
+              saved = localStorage.getItem(THEME_STORAGE_KEY);
+            } catch (e) {
+              saved = null;
+            }
+            if (saved) return;
+            applyTheme(event.matches ? 'dark' : 'light');
+          };
+
+          if (typeof mediaQuery.addEventListener === 'function') {
+            mediaQuery.addEventListener('change', onSystemThemeChange);
+          } else if (typeof mediaQuery.addListener === 'function') {
+            mediaQuery.addListener(onSystemThemeChange);
+          }
+        }
+
         function openLessonEditor(lessonKey, subject, bgColor, textColor, radius) {
           document.getElementById('editorModal').style.display = 'flex';
           document.getElementById('edit_subject').innerText = subject;
@@ -744,7 +1089,13 @@ def timetable():
             if (event.key === 'Escape') closeLessonEditor();
           });
         }
-        document.addEventListener('DOMContentLoaded', initializeLessonEditors);
+
+        function initializePage() {
+          initializeTheme();
+          initializeLessonEditors();
+        }
+
+        document.addEventListener('DOMContentLoaded', initializePage);
       </script>
     </head>
     <body>
@@ -752,8 +1103,13 @@ def timetable():
         <div class="brand">
           <h1>ModYourUntis</h1>
           <small>Eingeloggt als {{ username }}{% if active_theme %} • Theme: {{ active_theme.name }}{% endif %}</small>
+          <br>
+          <small>Woche: {{ week_start }} - {{ week_end }}</small>
         </div>
         <div class="controls">
+          <button type="button" id="themeToggle" class="theme-toggle">Dunkelmodus</button>
+          <a class="logout" href="{{ url_for('timetable', week=week_offset-1) }}">◀ Vorige Woche</a>
+          <a class="logout" href="{{ url_for('timetable', week=week_offset+1) }}">Nächste Woche ▶</a>
           <form method="POST" action="{{ url_for('theme_activate') }}">
             <select name="theme_id" required>
               {% for theme in themes %}
@@ -761,6 +1117,11 @@ def timetable():
               {% endfor %}
             </select>
             <button type="submit">Theme laden</button>
+            <button type="submit" formaction="{{ url_for('theme_delete') }}" formmethod="POST" class="btn-danger">Theme löschen</button>
+          </form>
+          <form method="POST" action="{{ url_for('theme_background') }}">
+            <input type="color" name="background_color" value="{{ active_background_color }}" title="Hintergrundfarbe">
+            <button type="submit">Hintergrund</button>
           </form>
           <form method="POST" action="{{ url_for('theme_create') }}">
             <input name="theme_name" maxlength="{{ theme_name_max_length }}" placeholder="Neues Theme" required>
@@ -841,6 +1202,10 @@ def timetable():
         active_theme=active_theme,
         username=username,
         theme_name_max_length=THEME_NAME_MAX_LENGTH,
+        active_background_color=active_background_color,
+        week_offset=week_offset,
+        week_start=monday.strftime("%d.%m.%Y"),
+        week_end=friday.strftime("%d.%m.%Y"),
     )
 
 

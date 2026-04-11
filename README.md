@@ -17,3 +17,7 @@ APP_DEBUG=true
 ```
 
 The app reads `.env` automatically on startup. If a variable is missing, a default is used.
+
+## Data Storage
+
+Visual settings (themes and lesson styles) are stored in `modyouruntis.json` in the project root.
