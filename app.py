@@ -135,9 +135,10 @@ def ensure_default_theme(username):
     if has_theme:
         return
 
+    theme_id = int(data["next_theme_id"])
     data["themes"].append(
         {
-            "id": int(data["next_theme_id"]),
+            "id": theme_id,
             "username": username,
             "name": "Default",
             "is_active": 1,
@@ -145,7 +146,25 @@ def ensure_default_theme(username):
             "background_color": DEFAULT_BACKGROUND_COLOR,
         }
     )
-    data["next_theme_id"] = int(data["next_theme_id"]) + 1
+    data["next_theme_id"] = theme_id + 1
+
+    default_styles = [
+        {"lesson_key": "subject:34", "bg_color": "#00ffff", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:38", "bg_color": "#7322ec", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:43", "bg_color": "#296053", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:17", "bg_color": "#bf1d1d", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:32", "bg_color": "#6a4672", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:11", "bg_color": "#da7a0b", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:18", "bg_color": "#61fb0e", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:163", "bg_color": "#ff004c", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:1", "bg_color": "#2aed1d", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:44", "bg_color": "#c124ff", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:7", "bg_color": "#00fac8", "text_color": "#ffffff", "border_radius": 12},
+        {"lesson_key": "subject:51", "bg_color": "#6a2930", "text_color": "#ffffff", "border_radius": 12},
+    ]
+    for style in default_styles:
+        data["lesson_styles"].append({"theme_id": theme_id, **style})
+
     save_data_store(data)
 
 
