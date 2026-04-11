@@ -4,13 +4,15 @@ import datetime
 import sqlite3
 import os
 import hashlib
+import json
 
 app = Flask(__name__)
-app.secret_key = "mega-geheimes-passwort"
+app.secret_key = os.environ.get("SECRET_KEY", "dev-secret-key-change-me")
 
 SCHOOL = "Gym Bersenbrück"
 SERVER = "nessa.webuntis.com"
 DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
+THEME_NAME_MAX_LENGTH = 40
 
 
 def init_db():
@@ -55,7 +57,7 @@ def ensure_default_theme(username):
         if not row:
             conn.execute(
                 "INSERT INTO themes(username, name, is_active, created_at) VALUES (?, ?, 1, ?)",
-                (username, "Standard", datetime.datetime.now(datetime.timezone.utc).isoformat()),
+                (username, "Default", datetime.datetime.now(datetime.timezone.utc).isoformat()),
             )
             conn.commit()
 
@@ -113,7 +115,11 @@ def create_theme(username, name):
     with get_db_connection() as conn:
         conn.execute(
             "INSERT OR IGNORE INTO themes(username, name, is_active, created_at) VALUES (?, ?, 0, ?)",
-            (username, cleaned[:40], datetime.datetime.now(datetime.timezone.utc).isoformat()),
+            (
+                username,
+                cleaned[:THEME_NAME_MAX_LENGTH],
+                datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            ),
         )
         conn.commit()
 
@@ -320,21 +326,22 @@ def index():
         }
       </style>
       <script>
-        window.onload = function() {
+        function saveUsername() {
+          localStorage.setItem("username", document.getElementById("username").value);
+        }
+        window.addEventListener("DOMContentLoaded", function() {
           if(localStorage.getItem("username")){
             document.getElementById("username").value = localStorage.getItem("username");
           }
-        }
-        function saveUsername(){
-          localStorage.setItem("username", document.getElementById("username").value);
-        }
+          document.getElementById("loginForm").addEventListener("submit", saveUsername);
+        });
       </script>
     </head>
     <body>
       <div class="card">
         <h1>ModYourUntis</h1>
         <p>Dein persönlicher Untis-Stundenplan im eigenen Design.</p>
-        <form method="POST" onsubmit="saveUsername()">
+        <form id="loginForm" method="POST">
           <label for="username">Benutzername</label>
           <input id="username" name="username" placeholder="Benutzername" required>
           <label for="password">Passwort</label>
@@ -449,7 +456,21 @@ def timetable():
             teacher = entry.get("te", [{}])[0].get("longName", teacher)
 
         entry_id = entry.get("id") or entry.get("lessonId") or ""
-        raw_lesson_key = f"{username}|{weekday}|{start_time}|{end_time}|{subject}|{teacher}|{room}|{entry_id}"
+        raw_lesson_key = json.dumps(
+            {
+                "username": username,
+                "weekday": weekday,
+                "start_time": start_time,
+                "end_time": end_time,
+                "subject": subject,
+                "teacher": teacher,
+                "room": room,
+                "entry_id": entry_id,
+            },
+            sort_keys=True,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
         lesson_key = hashlib.sha256(raw_lesson_key.encode("utf-8")).hexdigest()
 
         if code == "cancelled":
@@ -673,6 +694,9 @@ def timetable():
             if (event.target === this) closeLessonEditor();
           });
           document.getElementById('closeEditorButton').addEventListener('click', closeLessonEditor);
+          document.addEventListener('keydown', function(event) {
+            if (event.key === 'Escape') closeLessonEditor();
+          });
         }
         document.addEventListener('DOMContentLoaded', initializeLessonEditors);
       </script>
@@ -693,7 +717,7 @@ def timetable():
             <button type="submit">Theme laden</button>
           </form>
           <form method="POST" action="{{ url_for('theme_create') }}">
-            <input name="theme_name" maxlength="40" placeholder="Neues Theme" required>
+            <input name="theme_name" maxlength="{{ theme_name_max_length }}" placeholder="Neues Theme" required>
             <button type="submit">Theme erstellen</button>
           </form>
           <a class="logout" href="{{ url_for('logout') }}">Logout</a>
@@ -770,6 +794,7 @@ def timetable():
         themes=themes,
         active_theme=active_theme,
         username=username,
+        theme_name_max_length=THEME_NAME_MAX_LENGTH,
     )
 
 
