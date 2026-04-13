@@ -1034,6 +1034,7 @@ def timetable():
           --bg-gradient-end: {{ active_background_color }};
           --bg-opacity: {{ active_background_opacity_css }};
           --surface: #ffffff;
+          --surface-rgb: 255, 255, 255;
           --text: #263355;
           --muted: #6f7aa3;
           --elevated: #fbfcff;
@@ -1049,6 +1050,7 @@ def timetable():
         }
         :root[data-theme="dark"] {
           --surface: #1a233f;
+          --surface-rgb: 26, 35, 63;
           --text: #dde6ff;
           --muted: #9fb0e0;
           --elevated: #151d35;
@@ -1081,7 +1083,6 @@ def timetable():
           background-attachment: fixed;
           background-position: center;
           {% endif %}
-          opacity: var(--bg-opacity);
         }
         .topbar {
           display: flex;
@@ -1145,7 +1146,7 @@ def timetable():
           color: #ffffff;
         }
         .table-wrap {
-          background: var(--surface);
+          background: rgba(var(--surface-rgb), var(--bg-opacity));
           border-radius: 16px;
           box-shadow: var(--table-shadow);
           overflow-x: auto;
