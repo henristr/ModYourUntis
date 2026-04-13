@@ -352,9 +352,24 @@ def sanitize_hex_color(value, fallback):
     return fallback
 
 
+_SAFE_IMAGE_EXTENSIONS = {
+    "jpg": "jpg",
+    "jpeg": "jpeg",
+    "png": "png",
+    "webp": "webp",
+    "gif": "gif",
+}
+
+
 def _allowed_image_extension(filename):
-    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    return ext in ALLOWED_IMAGE_EXTENSIONS
+    raw_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return raw_ext in _SAFE_IMAGE_EXTENSIONS
+
+
+def _safe_extension_from_filename(filename):
+    """Return a sanitized extension from our literal allowlist, or None."""
+    raw_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _SAFE_IMAGE_EXTENSIONS.get(raw_ext)
 
 
 def _remove_bg_image_file(filename):
@@ -373,21 +388,17 @@ def save_active_theme_background_image(username, file_storage):
         return False, "Kein aktives Theme gefunden."
 
     original_filename = file_storage.filename or ""
-    if not _allowed_image_extension(original_filename):
+    safe_ext = _safe_extension_from_filename(original_filename)
+    if safe_ext is None:
         return False, "Ungültiges Dateiformat. Erlaubt: jpg, jpeg, png, webp, gif."
 
-    ext = original_filename.rsplit(".", 1)[-1].lower()
-    # Validate ext is purely alphanumeric to prevent any path traversal in filename.
-    if not ext.isalnum() or ext not in ALLOWED_IMAGE_EXTENSIONS:
-        return False, "Ungültiges Dateiformat. Erlaubt: jpg, jpeg, png, webp, gif."
-
-    data = _read_limited(file_storage, MAX_BG_IMAGE_BYTES)
-    if len(data) > MAX_BG_IMAGE_BYTES:
+    data, over_limit = _read_limited(file_storage, MAX_BG_IMAGE_BYTES)
+    if over_limit:
         return False, "Datei zu groß. Maximale Größe: 8 MB."
 
     os.makedirs(UPLOADS_DIR, exist_ok=True)
     theme_id = int(active_theme["id"])
-    new_filename = f"bg_{theme_id}.{ext}"
+    new_filename = f"bg_{theme_id}.{safe_ext}"
 
     # Remove any existing image for this theme (may have a different extension).
     db = load_data_store()
@@ -428,19 +439,24 @@ def remove_active_theme_background_image(username):
 
 
 def _read_limited(file_storage, limit):
+    """Read up to `limit` bytes from file_storage.
+
+    Returns ``(data, over_limit)`` where ``over_limit`` is True when the stream
+    contained more than ``limit`` bytes.
+    """
     chunks = []
     total = 0
+    over_limit = False
     while True:
         chunk = file_storage.stream.read(65536)
         if not chunk:
             break
         total += len(chunk)
         if total > limit:
-            # Return data exceeding the limit so the caller can detect the oversize.
-            chunks.append(chunk)
+            over_limit = True
             break
         chunks.append(chunk)
-    return b"".join(chunks)
+    return b"".join(chunks), over_limit
 
 
 def save_lesson_style(username, lesson_key, bg_color, text_color, border_radius):
