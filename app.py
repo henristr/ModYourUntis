@@ -377,7 +377,11 @@ def save_active_theme_background_image(username, file_storage):
         return False, "Ungültiges Dateiformat. Erlaubt: jpg, jpeg, png, webp, gif."
 
     ext = original_filename.rsplit(".", 1)[-1].lower()
-    data = _read_limited(file_storage, MAX_BG_IMAGE_BYTES + 1)
+    # Validate ext is purely alphanumeric to prevent any path traversal in filename.
+    if not ext.isalnum() or ext not in ALLOWED_IMAGE_EXTENSIONS:
+        return False, "Ungültiges Dateiformat. Erlaubt: jpg, jpeg, png, webp, gif."
+
+    data = _read_limited(file_storage, MAX_BG_IMAGE_BYTES)
     if len(data) > MAX_BG_IMAGE_BYTES:
         return False, "Datei zu groß. Maximale Größe: 8 MB."
 
@@ -431,9 +435,11 @@ def _read_limited(file_storage, limit):
         if not chunk:
             break
         total += len(chunk)
-        chunks.append(chunk)
         if total > limit:
+            # Return data exceeding the limit so the caller can detect the oversize.
+            chunks.append(chunk)
             break
+        chunks.append(chunk)
     return b"".join(chunks)
 
 
@@ -745,9 +751,22 @@ def theme_background_image_remove():
 
 @app.route("/uploads/<path:filename>")
 def uploaded_file(filename):
+    username = session.get("username")
+    if not username:
+        abort(403)
+
     safe = secure_filename(filename)
     if not safe or safe != filename:
         abort(404)
+
+    # Verify the requesting user owns a theme whose background image matches.
+    data = load_data_store()
+    if not any(
+        t["username"] == username and t.get("background_image") == safe
+        for t in data["themes"]
+    ):
+        abort(403)
+
     return send_from_directory(UPLOADS_DIR, safe)
 
 
