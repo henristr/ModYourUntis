@@ -43,6 +43,7 @@ LEGACY_DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
 UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 THEME_NAME_MAX_LENGTH = 40
 DEFAULT_BACKGROUND_COLOR = "#f4f6ff"
+DEFAULT_BACKGROUND_OPACITY = 100
 ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
 MAX_BG_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
@@ -73,6 +74,7 @@ def load_data_store():
 
     for theme in data["themes"]:
         theme.setdefault("background_color", DEFAULT_BACKGROUND_COLOR)
+        theme.setdefault("background_opacity", DEFAULT_BACKGROUND_OPACITY)
         theme.setdefault("background_image", None)
 
     return data
@@ -111,6 +113,7 @@ def migrate_legacy_db_if_needed(data):
             "is_active": int(row["is_active"]),
             "created_at": row["created_at"],
             "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_opacity": DEFAULT_BACKGROUND_OPACITY,
         }
         for row in themes
     ]
@@ -150,6 +153,7 @@ def ensure_default_theme(username):
             "is_active": 1,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_opacity": DEFAULT_BACKGROUND_OPACITY,
             "background_image": None,
         }
     )
@@ -196,6 +200,9 @@ def get_active_theme(username):
                 "background_color": theme.get(
                     "background_color", DEFAULT_BACKGROUND_COLOR
                 ),
+                "background_opacity": theme.get(
+                    "background_opacity", DEFAULT_BACKGROUND_OPACITY
+                ),
                 "background_image": theme.get("background_image"),
             }
 
@@ -211,6 +218,9 @@ def get_active_theme(username):
             "name": fallback["name"],
             "background_color": fallback.get(
                 "background_color", DEFAULT_BACKGROUND_COLOR
+            ),
+            "background_opacity": fallback.get(
+                "background_opacity", DEFAULT_BACKGROUND_OPACITY
             ),
             "background_image": fallback.get("background_image"),
         }
@@ -259,6 +269,7 @@ def create_theme(username, name):
             "is_active": 1,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_opacity": DEFAULT_BACKGROUND_OPACITY,
             "background_image": None,
         }
     )
@@ -325,17 +336,27 @@ def delete_theme(username, theme_id):
     return True
 
 
-def set_active_theme_background(username, background_color):
+def set_active_theme_background(username, background_color, background_opacity=None):
     active_theme = get_active_theme(username)
     if not active_theme:
         return
 
     safe_background = sanitize_hex_color(background_color, DEFAULT_BACKGROUND_COLOR)
+    if background_opacity is not None:
+        try:
+            safe_opacity = max(0, min(100, int(background_opacity)))
+        except (TypeError, ValueError):
+            safe_opacity = DEFAULT_BACKGROUND_OPACITY
+    else:
+        safe_opacity = None
+
     data = load_data_store()
     target_id = int(active_theme["id"])
     for theme in data["themes"]:
         if theme["username"] == username and int(theme["id"]) == target_id:
             theme["background_color"] = safe_background
+            if safe_opacity is not None:
+                theme["background_opacity"] = safe_opacity
             break
     save_data_store(data)
 
@@ -744,7 +765,11 @@ def theme_background():
     if not username:
         return redirect(url_for("index"))
 
-    set_active_theme_background(username, request.form.get("background_color", ""))
+    set_active_theme_background(
+        username,
+        request.form.get("background_color", ""),
+        request.form.get("background_opacity"),
+    )
     return redirect(url_for("timetable"))
 
 
@@ -836,6 +861,12 @@ def timetable():
         if active_theme
         else DEFAULT_BACKGROUND_COLOR
     )
+    active_background_opacity = (
+        active_theme.get("background_opacity", DEFAULT_BACKGROUND_OPACITY)
+        if active_theme
+        else DEFAULT_BACKGROUND_OPACITY
+    )
+    active_background_opacity_css = round(active_background_opacity / 100, 2)
     active_background_image = active_theme.get("background_image") if active_theme else None
     if active_background_image and not _is_valid_bg_image_filename(active_background_image):
         active_background_image = None
@@ -1001,6 +1032,7 @@ def timetable():
         :root {
           --bg: {{ active_background_color }};
           --bg-gradient-end: {{ active_background_color }};
+          --bg-opacity: {{ active_background_opacity_css }};
           --surface: #ffffff;
           --text: #263355;
           --muted: #6f7aa3;
@@ -1035,6 +1067,13 @@ def timetable():
           font-family: 'Inter', 'Segoe UI', sans-serif;
           margin: 0;
           padding: 24px;
+          color: var(--text);
+        }
+        body::before {
+          content: '';
+          position: fixed;
+          inset: 0;
+          z-index: -1;
           background: linear-gradient(180deg, var(--bg) 0%, var(--bg-gradient-end) 70%);
           {% if active_background_image %}
           background-image: url("{{ url_for('uploaded_file', filename=active_background_image)|urlencode }}");
@@ -1042,7 +1081,7 @@ def timetable():
           background-attachment: fixed;
           background-position: center;
           {% endif %}
-          color: var(--text);
+          opacity: var(--bg-opacity);
         }
         .topbar {
           display: flex;
@@ -1328,6 +1367,13 @@ def timetable():
           </form>
           <form method="POST" action="{{ url_for('theme_background') }}">
             <input type="color" name="background_color" value="{{ active_background_color }}" title="Hintergrundfarbe">
+            <label style="display:flex;align-items:center;gap:4px;font-size:13px;">
+              <input type="range" name="background_opacity" min="0" max="100" value="{{ active_background_opacity }}"
+                aria-label="Hintergrundtransparenz"
+                style="width:80px;cursor:pointer;"
+                oninput="this.nextElementSibling.textContent=this.value+'%'">
+              <span>{{ active_background_opacity }}%</span>
+            </label>
             <button type="submit">Hintergrundfarbe</button>
           </form>
           <form method="POST" action="{{ url_for('theme_background_image') }}" enctype="multipart/form-data">
@@ -1419,6 +1465,8 @@ def timetable():
         username=username,
         theme_name_max_length=THEME_NAME_MAX_LENGTH,
         active_background_color=active_background_color,
+        active_background_opacity=active_background_opacity,
+        active_background_opacity_css=active_background_opacity_css,
         active_background_image=active_background_image,
         week_offset=week_offset,
         week_start=monday.strftime("%d.%m.%Y"),
