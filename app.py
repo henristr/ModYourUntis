@@ -1,9 +1,11 @@
-from flask import Flask, render_template_string, request, redirect, url_for, session
+from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, abort
+import re
 import requests
 import datetime
 import os
 import hashlib
 import json
+from werkzeug.utils import secure_filename
 
 
 def load_env_file(path):
@@ -38,8 +40,11 @@ SCHOOL = os.environ.get("SCHOOL", "Gym Bersenbrück")
 SERVER = os.environ.get("SERVER", "nessa.webuntis.com")
 DATA_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.json")
 LEGACY_DB_PATH = os.path.join(os.path.dirname(__file__), "modyouruntis.db")
+UPLOADS_DIR = os.path.join(os.path.dirname(__file__), "uploads")
 THEME_NAME_MAX_LENGTH = 40
 DEFAULT_BACKGROUND_COLOR = "#f4f6ff"
+ALLOWED_IMAGE_EXTENSIONS = {"jpg", "jpeg", "png", "webp", "gif"}
+MAX_BG_IMAGE_BYTES = 8 * 1024 * 1024  # 8 MB
 APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("APP_PORT", "5000"))
 APP_DEBUG = env_bool("APP_DEBUG", default=True)
@@ -68,6 +73,7 @@ def load_data_store():
 
     for theme in data["themes"]:
         theme.setdefault("background_color", DEFAULT_BACKGROUND_COLOR)
+        theme.setdefault("background_image", None)
 
     return data
 
@@ -144,6 +150,7 @@ def ensure_default_theme(username):
             "is_active": 1,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_image": None,
         }
     )
     data["next_theme_id"] = theme_id + 1
@@ -189,6 +196,7 @@ def get_active_theme(username):
                 "background_color": theme.get(
                     "background_color", DEFAULT_BACKGROUND_COLOR
                 ),
+                "background_image": theme.get("background_image"),
             }
 
     if user_themes:
@@ -204,6 +212,7 @@ def get_active_theme(username):
             "background_color": fallback.get(
                 "background_color", DEFAULT_BACKGROUND_COLOR
             ),
+            "background_image": fallback.get("background_image"),
         }
     return None
 
@@ -250,6 +259,7 @@ def create_theme(username, name):
             "is_active": 1,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "background_color": DEFAULT_BACKGROUND_COLOR,
+            "background_image": None,
         }
     )
     data["next_theme_id"] = int(data["next_theme_id"]) + 1
@@ -286,6 +296,7 @@ def delete_theme(username, theme_id):
 
     was_active = int(target.get("is_active", 0)) == 1
     delete_id = int(target["id"])
+    old_image = target.get("background_image")
 
     data["themes"] = [
         t
@@ -309,6 +320,8 @@ def delete_theme(username, theme_id):
                     theme["is_active"] = 1 if int(theme["id"]) == first_id else 0
 
     save_data_store(data)
+    if old_image:
+        _remove_bg_image_file(old_image)
     return True
 
 
@@ -338,6 +351,121 @@ def sanitize_hex_color(value, fallback):
         except ValueError:
             return fallback
     return fallback
+
+
+_SAFE_IMAGE_EXTENSIONS = {
+    "jpg": "jpg",
+    "jpeg": "jpeg",
+    "png": "png",
+    "webp": "webp",
+    "gif": "gif",
+}
+
+
+_BG_IMAGE_FILENAME_RE = re.compile(r"^bg_\d+\.(?:jpg|jpeg|png|webp|gif)$")
+
+
+def _is_valid_bg_image_filename(filename):
+    """Return True only for filenames matching the expected background image pattern."""
+    return bool(filename and _BG_IMAGE_FILENAME_RE.match(filename))
+
+
+
+    raw_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return raw_ext in _SAFE_IMAGE_EXTENSIONS
+
+
+def _safe_extension_from_filename(filename):
+    """Return a sanitized extension from our literal allowlist, or None."""
+    raw_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    return _SAFE_IMAGE_EXTENSIONS.get(raw_ext)
+
+
+def _remove_bg_image_file(filename):
+    if not filename:
+        return
+    path = os.path.join(UPLOADS_DIR, filename)
+    try:
+        os.remove(path)
+    except OSError:
+        pass
+
+
+def save_active_theme_background_image(username, file_storage):
+    active_theme = get_active_theme(username)
+    if not active_theme:
+        return False, "Kein aktives Theme gefunden."
+
+    original_filename = file_storage.filename or ""
+    safe_ext = _safe_extension_from_filename(original_filename)
+    if safe_ext is None:
+        return False, "Ungültiges Dateiformat. Erlaubt: jpg, jpeg, png, webp, gif."
+
+    data, over_limit = _read_limited(file_storage, MAX_BG_IMAGE_BYTES)
+    if over_limit:
+        return False, "Datei zu groß. Maximale Größe: 8 MB."
+
+    os.makedirs(UPLOADS_DIR, exist_ok=True)
+    theme_id = int(active_theme["id"])
+    new_filename = f"bg_{theme_id}.{safe_ext}"
+
+    # Remove any existing image for this theme (may have a different extension).
+    db = load_data_store()
+    for theme in db["themes"]:
+        if theme["username"] == username and int(theme["id"]) == theme_id:
+            old_image = theme.get("background_image")
+            if old_image and old_image != new_filename:
+                _remove_bg_image_file(old_image)
+            break
+
+    dest = os.path.join(UPLOADS_DIR, new_filename)
+    with open(dest, "wb") as fh:
+        fh.write(data)
+
+    for theme in db["themes"]:
+        if theme["username"] == username and int(theme["id"]) == theme_id:
+            theme["background_image"] = new_filename
+            break
+    save_data_store(db)
+    return True, None
+
+
+def remove_active_theme_background_image(username):
+    active_theme = get_active_theme(username)
+    if not active_theme:
+        return
+
+    theme_id = int(active_theme["id"])
+    data = load_data_store()
+    old_image = None
+    for theme in data["themes"]:
+        if theme["username"] == username and int(theme["id"]) == theme_id:
+            old_image = theme.get("background_image")
+            theme["background_image"] = None
+            break
+    save_data_store(data)
+    _remove_bg_image_file(old_image)
+
+
+def _read_limited(file_storage, limit):
+    """Read up to `limit` bytes from file_storage.
+
+    Returns ``(data, over_limit)`` where ``over_limit`` is True when the stream
+    contained more than ``limit`` bytes.
+    """
+    chunks = []
+    total = 0
+    over_limit = False
+    while True:
+        chunk = file_storage.stream.read(65536)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > limit:
+            over_limit = True
+            break
+        chunks.append(chunk)
+    return b"".join(chunks), over_limit
 
 
 def save_lesson_style(username, lesson_key, bg_color, text_color, border_radius):
@@ -620,6 +748,53 @@ def theme_background():
     return redirect(url_for("timetable"))
 
 
+@app.route("/theme/background-image", methods=["POST"])
+def theme_background_image():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("index"))
+
+    file = request.files.get("background_image")
+    if not file or not file.filename:
+        return redirect(url_for("timetable"))
+
+    ok, error = save_active_theme_background_image(username, file)
+    if not ok:
+        return f"❌ {error}", 400
+    return redirect(url_for("timetable"))
+
+
+@app.route("/theme/background-image/remove", methods=["POST"])
+def theme_background_image_remove():
+    username = session.get("username")
+    if not username:
+        return redirect(url_for("index"))
+
+    remove_active_theme_background_image(username)
+    return redirect(url_for("timetable"))
+
+
+@app.route("/uploads/<filename>")
+def uploaded_file(filename):
+    username = session.get("username")
+    if not username:
+        abort(403)
+
+    safe = secure_filename(filename)
+    if not safe or safe != filename or not _is_valid_bg_image_filename(safe):
+        abort(404)
+
+    # Verify the requesting user owns a theme whose background image matches.
+    data = load_data_store()
+    if not any(
+        t["username"] == username and t.get("background_image") == safe
+        for t in data["themes"]
+    ):
+        abort(403)
+
+    return send_from_directory(UPLOADS_DIR, safe)
+
+
 @app.route("/lesson-style/save", methods=["POST"])
 def lesson_style_save():
     username = session.get("username")
@@ -661,6 +836,9 @@ def timetable():
         if active_theme
         else DEFAULT_BACKGROUND_COLOR
     )
+    active_background_image = active_theme.get("background_image") if active_theme else None
+    if active_background_image and not _is_valid_bg_image_filename(active_background_image):
+        active_background_image = None
 
     try:
         week_offset = int(request.args.get("week", "0"))
@@ -858,6 +1036,12 @@ def timetable():
           margin: 0;
           padding: 24px;
           background: linear-gradient(180deg, var(--bg) 0%, var(--bg-gradient-end) 70%);
+          {% if active_background_image %}
+          background-image: url("{{ url_for('uploaded_file', filename=active_background_image)|urlencode }}");
+          background-size: cover;
+          background-attachment: fixed;
+          background-position: center;
+          {% endif %}
           color: var(--text);
         }
         .topbar {
@@ -1144,8 +1328,17 @@ def timetable():
           </form>
           <form method="POST" action="{{ url_for('theme_background') }}">
             <input type="color" name="background_color" value="{{ active_background_color }}" title="Hintergrundfarbe">
-            <button type="submit">Hintergrund</button>
+            <button type="submit">Hintergrundfarbe</button>
           </form>
+          <form method="POST" action="{{ url_for('theme_background_image') }}" enctype="multipart/form-data">
+            <input type="file" name="background_image" accept=".jpg,.jpeg,.png,.webp,.gif" required title="Hintergrundbild hochladen">
+            <button type="submit">Bild hochladen</button>
+          </form>
+          {% if active_background_image %}
+          <form method="POST" action="{{ url_for('theme_background_image_remove') }}">
+            <button type="submit" class="btn-danger">Bild entfernen</button>
+          </form>
+          {% endif %}
           <form method="POST" action="{{ url_for('theme_create') }}">
             <input name="theme_name" maxlength="{{ theme_name_max_length }}" placeholder="Neues Theme" required>
             <button type="submit">Theme erstellen</button>
@@ -1226,6 +1419,7 @@ def timetable():
         username=username,
         theme_name_max_length=THEME_NAME_MAX_LENGTH,
         active_background_color=active_background_color,
+        active_background_image=active_background_image,
         week_offset=week_offset,
         week_start=monday.strftime("%d.%m.%Y"),
         week_end=friday.strftime("%d.%m.%Y"),
