@@ -1,4 +1,5 @@
 from flask import Flask, render_template_string, request, redirect, url_for, session, send_from_directory, abort
+import re
 import requests
 import datetime
 import os
@@ -361,7 +362,15 @@ _SAFE_IMAGE_EXTENSIONS = {
 }
 
 
-def _allowed_image_extension(filename):
+_BG_IMAGE_FILENAME_RE = re.compile(r"^bg_\d+\.(?:jpg|jpeg|png|webp|gif)$")
+
+
+def _is_valid_bg_image_filename(filename):
+    """Return True only for filenames matching the expected background image pattern."""
+    return bool(filename and _BG_IMAGE_FILENAME_RE.match(filename))
+
+
+
     raw_ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
     return raw_ext in _SAFE_IMAGE_EXTENSIONS
 
@@ -765,14 +774,14 @@ def theme_background_image_remove():
     return redirect(url_for("timetable"))
 
 
-@app.route("/uploads/<path:filename>")
+@app.route("/uploads/<filename>")
 def uploaded_file(filename):
     username = session.get("username")
     if not username:
         abort(403)
 
     safe = secure_filename(filename)
-    if not safe or safe != filename:
+    if not safe or safe != filename or not _is_valid_bg_image_filename(safe):
         abort(404)
 
     # Verify the requesting user owns a theme whose background image matches.
@@ -828,6 +837,8 @@ def timetable():
         else DEFAULT_BACKGROUND_COLOR
     )
     active_background_image = active_theme.get("background_image") if active_theme else None
+    if active_background_image and not _is_valid_bg_image_filename(active_background_image):
+        active_background_image = None
 
     try:
         week_offset = int(request.args.get("week", "0"))
@@ -1026,7 +1037,7 @@ def timetable():
           padding: 24px;
           background: linear-gradient(180deg, var(--bg) 0%, var(--bg-gradient-end) 70%);
           {% if active_background_image %}
-          background-image: url("{{ url_for('uploaded_file', filename=active_background_image) }}");
+          background-image: url("{{ url_for('uploaded_file', filename=active_background_image)|urlencode }}");
           background-size: cover;
           background-attachment: fixed;
           background-position: center;
