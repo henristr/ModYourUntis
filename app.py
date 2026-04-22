@@ -648,6 +648,8 @@ def index():
         """
     <html>
     <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>ModYourUntis | Login</title>
       <style>
         :root { color-scheme: light; }
@@ -691,6 +693,41 @@ def index():
           font-weight: 700;
           cursor: pointer;
           font-size: 15px;
+          min-height: 44px;
+        }
+        @media (max-width: 479px) {
+          body {
+            padding: 16px;
+            font-size: clamp(12px, 2.5vw, 14px);
+          }
+          .card {
+            padding: 20px;
+            border-radius: 16px;
+          }
+          h1 {
+            font-size: clamp(1.2rem, 4.5vw, 1.5rem);
+            margin: 0 0 6px;
+          }
+          p {
+            margin: 0 0 18px;
+            font-size: clamp(13px, 2.2vw, 14px);
+            word-wrap: break-word;
+            word-break: break-word;
+          }
+          label {
+            font-size: clamp(12px, 2.2vw, 14px);
+            margin: 10px 0 5px;
+          }
+          input {
+            padding: 11px;
+            font-size: clamp(14px, 2.5vw, 16px);
+            min-height: 44px;
+            word-wrap: break-word;
+          }
+          button {
+            padding: 11px;
+            font-size: clamp(14px, 2.5vw, 16px);
+          }
         }
       </style>
       <script>
@@ -1011,6 +1048,8 @@ def timetable():
     html_template = """
     <html>
     <head>
+      <meta charset="UTF-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>ModYourUntis | Stundenplan</title>
       <script>
         (function() {
@@ -1161,11 +1200,15 @@ def timetable():
         th, td {
           text-align: center;
           vertical-align: top;
+          word-wrap: break-word;
+          word-break: break-word;
         }
         th {
           padding: 10px;
           color: var(--muted);
           font-size: 0.9rem;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
         td.time {
           background: var(--time-bg);
@@ -1174,12 +1217,15 @@ def timetable():
           border-radius: 10px;
           width: 90px;
           padding: 8px;
+          word-break: break-word;
+          overflow: hidden;
         }
         td.slot {
           background: var(--elevated);
           border-radius: 12px;
           min-height: 72px;
           padding: 4px;
+          overflow: hidden;
         }
         .lesson {
           margin: 4px 0;
@@ -1191,6 +1237,12 @@ def timetable():
           transition: transform 0.15s ease, box-shadow 0.15s ease;
           cursor: pointer;
           position: relative;
+          word-wrap: break-word;
+          word-break: break-word;
+          overflow: hidden;
+          display: -webkit-box;
+          -webkit-line-clamp: 4;
+          -webkit-box-orient: vertical;
         }
         .lesson:hover {
           transform: translateY(-2px);
@@ -1234,6 +1286,206 @@ def timetable():
         .btn-secondary {
           background: var(--link-bg);
           color: var(--link-text);
+        }
+        .hamburger {
+          display: none;
+          flex-direction: column;
+          background: none;
+          border: none;
+          cursor: pointer;
+          padding: 8px;
+          gap: 4px;
+          min-height: 44px;
+          min-width: 44px;
+        }
+        .hamburger span {
+          width: 24px;
+          height: 2px;
+          background: var(--text);
+          border-radius: 2px;
+          transition: all 0.3s ease;
+        }
+        .hamburger.active span:nth-child(1) {
+          transform: rotate(45deg) translate(8px, 8px);
+        }
+        .hamburger.active span:nth-child(2) {
+          opacity: 0;
+        }
+        .hamburger.active span:nth-child(3) {
+          transform: rotate(-45deg) translate(8px, -8px);
+        }
+        .mobile-menu {
+          display: none;
+          position: fixed;
+          inset: 0;
+          background: rgba(10, 16, 44, 0.5);
+          z-index: 999;
+        }
+        .mobile-menu.active {
+          display: flex;
+        }
+        .mobile-menu-content {
+          position: fixed;
+          top: 0;
+          right: 0;
+          height: 100vh;
+          width: 280px;
+          background: var(--surface);
+          box-shadow: -2px 0 10px rgba(0, 0, 0, 0.1);
+          overflow-y: auto;
+          z-index: 1000;
+          padding: 16px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .mobile-menu-close {
+          align-self: flex-end;
+          background: none;
+          border: none;
+          font-size: 24px;
+          cursor: pointer;
+          padding: 8px;
+          color: var(--text);
+          min-height: 44px;
+          min-width: 44px;
+        }
+        .mobile-menu-section {
+          border-top: 1px solid var(--control-border);
+          padding-top: 12px;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .mobile-menu-section:first-of-type {
+          border-top: none;
+          padding-top: 0;
+        }
+        .mobile-menu-section small {
+          color: var(--muted);
+          font-size: 12px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 4px;
+        }
+        .mobile-menu-section form,
+        .mobile-menu-section a {
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+        }
+        .mobile-menu-section button,
+        .mobile-menu-section input,
+        .mobile-menu-section select {
+          min-height: 44px;
+          font-size: 14px;
+        }
+        @media (max-width: 479px) {
+          body {
+            padding: 12px;
+            font-size: clamp(12px, 2.5vw, 14px);
+          }
+          .topbar {
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .brand {
+            min-width: 100%;
+            order: -1;
+          }
+          .brand h1 {
+            font-size: clamp(1.1rem, 5vw, 1.4rem);
+            margin: 0 0 4px;
+          }
+          .brand small {
+            display: block;
+            font-size: clamp(10px, 2vw, 12px);
+            margin: 2px 0;
+            word-break: break-word;
+          }
+          .controls {
+            display: none;
+          }
+          .hamburger {
+            display: flex;
+            align-self: flex-start;
+          }
+          .table-wrap {
+            padding: 6px;
+            border-radius: 12px;
+            overflow-x: auto;
+          }
+          table {
+            border-spacing: 4px;
+            width: 100%;
+          }
+          th {
+            padding: 4px 2px;
+            font-size: clamp(9px, 1.8vw, 11px);
+            word-break: break-word;
+            word-wrap: break-word;
+          }
+          td.time {
+            width: 50px;
+            padding: 4px 2px;
+            font-size: clamp(8px, 1.5vw, 10px);
+            word-break: break-word;
+            min-width: 50px;
+          }
+          td.slot {
+            min-height: 50px;
+            padding: 2px;
+            overflow: hidden;
+          }
+          .lesson {
+            margin: 1px 0;
+            padding: 4px;
+            font-size: clamp(7px, 1.3vw, 9px);
+            line-height: clamp(0.9rem, 1.8vw, 1rem);
+            word-break: break-word;
+            word-wrap: break-word;
+            overflow: hidden;
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+          }
+          .edit-tag {
+            font-size: clamp(6px, 1vw, 8px);
+            right: 2px;
+            top: 2px;
+            display: none;
+          }
+          .modal-content {
+            width: min(280px, 95vw);
+            padding: 12px;
+          }
+          .modal-content h3 {
+            font-size: clamp(0.8rem, 3vw, 1rem);
+            word-break: break-word;
+          }
+          .grid {
+            grid-template-columns: 1fr;
+          }
+          .grid label {
+            font-size: clamp(11px, 2vw, 13px);
+            word-break: break-word;
+          }
+          input[type="color"],
+          input[type="range"],
+          input[type="file"],
+          select,
+          button {
+            min-height: 44px;
+            font-size: clamp(12px, 2.5vw, 14px);
+            word-break: break-word;
+          }
+          input[type="text"],
+          input[type="password"],
+          input[type="email"] {
+            font-size: clamp(14px, 2.5vw, 16px);
+          }
         }
       </style>
       <script>
@@ -1337,9 +1589,54 @@ def timetable():
           });
         }
 
+        function initializeHamburgerMenu() {
+          const hamburger = document.getElementById('hamburger');
+          const mobileMenu = document.getElementById('mobileMenu');
+          const mobileMenuClose = document.getElementById('mobileMenuClose');
+          const themeToggleM = document.getElementById('themeToggleM');
+          const themeToggle = document.getElementById('themeToggle');
+
+          if (!hamburger || !mobileMenu) return;
+
+          hamburger.addEventListener('click', () => {
+            mobileMenu.classList.add('active');
+            hamburger.classList.add('active');
+          });
+
+          mobileMenuClose.addEventListener('click', () => {
+            mobileMenu.classList.remove('active');
+            hamburger.classList.remove('active');
+          });
+
+          mobileMenu.addEventListener('click', (e) => {
+            if (e.target === mobileMenu) {
+              mobileMenu.classList.remove('active');
+              hamburger.classList.remove('active');
+            }
+          });
+
+          if (themeToggleM && themeToggle) {
+            themeToggleM.addEventListener('click', () => {
+              themeToggle.click();
+              themeToggleM.textContent = themeToggle.textContent;
+            });
+          }
+
+          const menuLinks = mobileMenu.querySelectorAll('a, button[type="submit"]');
+          menuLinks.forEach(link => {
+            link.addEventListener('click', () => {
+              if (link.getAttribute('href') !== '#') {
+                mobileMenu.classList.remove('active');
+                hamburger.classList.remove('active');
+              }
+            });
+          });
+        }
+
         function initializePage() {
           initializeTheme();
           initializeLessonEditors();
+          initializeHamburgerMenu();
         }
 
         document.addEventListener('DOMContentLoaded', initializePage);
@@ -1353,6 +1650,11 @@ def timetable():
           <br>
           <small>Woche: {{ week_start }} - {{ week_end }}</small>
         </div>
+        <button type="button" id="hamburger" class="hamburger" aria-label="Menu">
+          <span></span>
+          <span></span>
+          <span></span>
+        </button>
         <div class="controls">
           <button type="button" id="themeToggle" class="theme-toggle">Dunkelmodus</button>
           <a class="logout" href="{{ url_for('timetable', week=week_offset-1) }}">◀ Vorige Woche</a>
@@ -1391,6 +1693,72 @@ def timetable():
             <button type="submit">Theme erstellen</button>
           </form>
           <a class="logout" href="{{ url_for('logout') }}">Logout</a>
+        </div>
+      </div>
+
+      <div id="mobileMenu" class="mobile-menu">
+        <div class="mobile-menu-content">
+          <button type="button" id="mobileMenuClose" class="mobile-menu-close" aria-label="Menu schließen">✕</button>
+
+          <div class="mobile-menu-section">
+            <small>Navigation</small>
+            <a class="logout" href="{{ url_for('timetable', week=week_offset-1) }}">◀ Vorige Woche</a>
+            <a class="logout" href="{{ url_for('timetable', week=week_offset+1) }}">Nächste Woche ▶</a>
+          </div>
+
+          <div class="mobile-menu-section">
+            <small>Ansicht</small>
+            <button type="button" id="themeToggleM" class="theme-toggle">Dunkelmodus</button>
+          </div>
+
+          <div class="mobile-menu-section">
+            <small>Theme</small>
+            <form method="POST" action="{{ url_for('theme_activate') }}">
+              <select name="theme_id" required>
+                {% for theme in themes %}
+                  <option value="{{ theme.id }}" {% if theme.is_active %}selected{% endif %}>{{ theme.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit">Laden</button>
+              <button type="submit" formaction="{{ url_for('theme_delete') }}" formmethod="POST" class="btn-danger">Löschen</button>
+            </form>
+          </div>
+
+          <div class="mobile-menu-section">
+            <small>Hintergrund</small>
+            <form method="POST" action="{{ url_for('theme_background') }}">
+              <input type="color" name="background_color" value="{{ active_background_color }}" title="Hintergrundfarbe" style="min-height: 44px; cursor: pointer;">
+              <label style="display:flex;align-items:center;gap:4px;font-size:12px;">
+                <input type="range" name="background_opacity" min="0" max="100" value="{{ active_background_opacity }}"
+                  aria-label="Hintergrundtransparenz"
+                  style="width:100%;cursor:pointer;"
+                  oninput="this.nextElementSibling.textContent=this.value+'%'">
+                <span>{{ active_background_opacity }}%</span>
+              </label>
+              <button type="submit">Farbe speichern</button>
+            </form>
+            <form method="POST" action="{{ url_for('theme_background_image') }}" enctype="multipart/form-data">
+              <input type="file" name="background_image" accept=".jpg,.jpeg,.png,.webp,.gif" required title="Hintergrundbild hochladen">
+              <button type="submit">Bild hochladen</button>
+            </form>
+            {% if active_background_image %}
+            <form method="POST" action="{{ url_for('theme_background_image_remove') }}">
+              <button type="submit" class="btn-danger">Bild entfernen</button>
+            </form>
+            {% endif %}
+          </div>
+
+          <div class="mobile-menu-section">
+            <small>Theme erstellen</small>
+            <form method="POST" action="{{ url_for('theme_create') }}">
+              <input name="theme_name" maxlength="{{ theme_name_max_length }}" placeholder="Name" required style="flex: 1;">
+              <button type="submit">Erstellen</button>
+            </form>
+          </div>
+
+          <div class="mobile-menu-section">
+            <a class="logout" href="{{ url_for('logout') }}" style="text-decoration: none; color: var(--link-text); font-weight: 600;">Abmelden</a>
+          </div>
         </div>
       </div>
 
